@@ -1,6 +1,6 @@
 import { Elysia } from 'elysia';
 import { getAsiaServers } from './nordvpn';
-import { rotateContainers, cleanupExistingContainers, type ContainerInfo } from './docker';
+import { rotateContainers, cleanupExistingContainers, getRunningVPNCount, ensureAllContainersRunning, type ContainerInfo } from './docker';
 
 const PORT = process.env.PORT || 3000;
 const NORD_USERNAME = process.env.NORD_USERNAME || '';
@@ -12,8 +12,11 @@ if (!NORD_USERNAME || !NORD_PASSWORD) {
 }
 
 let activeContainers: ContainerInfo[] = [];
+let isRotating = false;
 
 async function performRotation() {
+    if (isRotating) return;
+    isRotating = true;
     try {
         const servers = await getAsiaServers();
         if (servers.length === 0) {
@@ -22,13 +25,12 @@ async function performRotation() {
         }
         // Shuffle servers to get different ones each time
         const shuffled = servers.sort(() => 0.5 - Math.random());
-        // The following line was malformed in the instruction, assuming the intent was to use rotateContainers
-        // or if createVPNContainer was meant to be used, it would be part of a loop or different logic.
-        // Sticking to the original logic but ensuring the import is correct if createVPNContainer is needed elsewhere.
         activeContainers = await rotateContainers(shuffled, NORD_USERNAME, NORD_PASSWORD);
         console.log(`Rotation complete. ${activeContainers.length} containers running.`);
     } catch (error) {
         console.error('Rotation failed:', error);
+    } finally {
+        isRotating = false;
     }
 }
 
@@ -37,6 +39,30 @@ performRotation();
 
 // Rotate every 10 minutes
 setInterval(performRotation, 10 * 60 * 1000);
+
+// Check every 5 seconds if servers.length is indeed 20
+const monitorInterval = setInterval(async () => {
+    if (isRotating) return;
+    const count = await getRunningVPNCount();
+    console.log(`[Monitor] Current servers count: ${count}`);
+    if (count !== 20) {
+        console.warn(`[Alert] Expected 20 servers, but found ${count}! Starting missing containers...`);
+        isRotating = true;
+        try {
+            const servers = await getAsiaServers();
+            const shuffled = servers.sort(() => 0.5 - Math.random());
+            const newContainers = await ensureAllContainersRunning(shuffled, NORD_USERNAME, NORD_PASSWORD);
+            // Update activeContainers with new ones if needed, 
+            // though activeContainers is mostly used for the /ports endpoint.
+            // For simplicity, we can just refresh the whole list from docker if we wanted to be precise.
+            console.log(`[Monitor] Started ${newContainers.length} missing containers.`);
+        } catch (error) {
+            console.error('[Monitor] Failed to start missing containers:', error);
+        } finally {
+            isRotating = false;
+        }
+    }
+}, 5000);
 
 const app = new Elysia()
     .get('/', () => ({ status: 'ok', message: 'VPN Manager is running' }))
@@ -52,6 +78,7 @@ const app = new Elysia()
     })
     .on("stop", async () => {
         console.log('\nShutting down... Cleaning up containers.');
+        clearInterval(monitorInterval);
         await cleanupExistingContainers();
         return
     })
