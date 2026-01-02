@@ -1,9 +1,17 @@
 import Docker from 'dockerode';
 
 const docker = new Docker();
-const MAX_CONTAINERS = 20;
+export const MAX_CONTAINERS = 5;
 const BASE_PORT = 8881;
 const IMAGE = 'mogzol/nordvpn-tinyproxy:latest';
+
+const NORD_USERNAME = process.env.NORD_USERNAME || '';
+const NORD_PASSWORD = process.env.NORD_PASSWORD || '';
+
+if (!NORD_USERNAME || !NORD_PASSWORD) {
+    console.error('NORD_USERNAME and NORD_PASSWORD must be set in environment variables.');
+    process.exit(1);
+}
 
 export interface ContainerInfo {
     id: string;
@@ -29,7 +37,7 @@ export async function cleanupExistingContainers() {
     }
 }
 
-export async function createVPNContainer(index: number, server: string, username: string, password: string): Promise<ContainerInfo> {
+export async function createVPNContainer(index: number, server: string): Promise<ContainerInfo> {
     const name = `nord-vpn-${index}`;
     const port = BASE_PORT + index;
 
@@ -42,12 +50,12 @@ export async function createVPNContainer(index: number, server: string, username
             PortBindings: {
                 '8888/tcp': [{ HostPort: port.toString() }]
             },
-            RestartPolicy: { Name: 'unless-stopped' },
+            RestartPolicy: { Name: 'no' },
             Dns: ['1.1.1.1']
         },
         Env: [
-            `USERNAME=${username}`,
-            `PASSWORD=${password}`,
+            `USERNAME=${NORD_USERNAME}`,
+            `PASSWORD=${NORD_PASSWORD}`,
             `SERVER=${server}`
         ]
     });
@@ -62,7 +70,7 @@ export async function createVPNContainer(index: number, server: string, username
     };
 }
 
-export async function rotateContainers(servers: string[], username: string, password: string): Promise<ContainerInfo[]> {
+export async function rotateContainers(servers: string[]): Promise<ContainerInfo[]> {
     console.log('Rotating containers...');
     await cleanupExistingContainers();
 
@@ -73,14 +81,14 @@ export async function rotateContainers(servers: string[], username: string, pass
         const server = servers[i];
         if (!server) continue;
         console.log(`Starting container ${i + 1}/${count} with server ${server}`);
-        const info = await createVPNContainer(i, server, username, password);
+        const info = await createVPNContainer(i, server);
         activeContainers.push(info);
     }
 
     return activeContainers;
 }
 
-export async function ensureAllContainersRunning(servers: string[], username: string, password: string): Promise<ContainerInfo[]> {
+export async function ensureAllContainersRunning(servers: string[]): Promise<ContainerInfo[]> {
     const containers = await docker.listContainers({ all: true });
     const existingIndices = new Set<number>();
 
@@ -111,7 +119,7 @@ export async function ensureAllContainersRunning(servers: string[], username: st
             if (!server) continue;
             console.log(`Starting missing container ${i + 1}/${count} with server ${server}`);
             try {
-                const info = await createVPNContainer(i, server, username, password);
+                const info = await createVPNContainer(i, server);
                 newContainers.push(info);
             } catch (e) {
                 console.error(`Failed to create container nord-vpn-${i}:`, e);

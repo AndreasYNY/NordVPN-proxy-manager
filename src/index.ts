@@ -1,16 +1,8 @@
 import { Elysia } from 'elysia';
 import { getAsiaServers } from './nordvpn';
-import { rotateContainers, cleanupExistingContainers, getRunningVPNCount, ensureAllContainersRunning, type ContainerInfo } from './docker';
+import { rotateContainers, cleanupExistingContainers, getRunningVPNCount, ensureAllContainersRunning, MAX_CONTAINERS, type ContainerInfo } from './docker';
 
 const PORT = process.env.PORT || 3000;
-const NORD_USERNAME = process.env.NORD_USERNAME || '';
-const NORD_PASSWORD = process.env.NORD_PASSWORD || '';
-
-if (!NORD_USERNAME || !NORD_PASSWORD) {
-    console.error('NORD_USERNAME and NORD_PASSWORD must be set in environment variables.');
-    process.exit(1);
-}
-
 let activeContainers: ContainerInfo[] = [];
 let isRotating = false;
 
@@ -25,7 +17,7 @@ async function performRotation() {
         }
         // Shuffle servers to get different ones each time
         const shuffled = servers.sort(() => 0.5 - Math.random());
-        activeContainers = await rotateContainers(shuffled, NORD_USERNAME, NORD_PASSWORD);
+        activeContainers = await rotateContainers(shuffled);
         console.log(`Rotation complete. ${activeContainers.length} containers running.`);
     } catch (error) {
         console.error('Rotation failed:', error);
@@ -40,18 +32,18 @@ performRotation();
 // Rotate every 10 minutes
 setInterval(performRotation, 10 * 60 * 1000);
 
-// Check every 5 seconds if servers.length is indeed 20
+// Check every 5 seconds if servers.length is indeed MAX_CONTAINERS
 const monitorInterval = setInterval(async () => {
     if (isRotating) return;
     const count = await getRunningVPNCount();
     console.log(`[Monitor] Current servers count: ${count}`);
-    if (count !== 20) {
-        console.warn(`[Alert] Expected 20 servers, but found ${count}! Starting missing containers...`);
+    if (count !== MAX_CONTAINERS) {
+        console.warn(`[Alert] Expected ${MAX_CONTAINERS} servers, but found ${count}! Starting missing containers...`);
         isRotating = true;
         try {
             const servers = await getAsiaServers();
             const shuffled = servers.sort(() => 0.5 - Math.random());
-            const newContainers = await ensureAllContainersRunning(shuffled, NORD_USERNAME, NORD_PASSWORD);
+            const newContainers = await ensureAllContainersRunning(shuffled);
             // Update activeContainers with new ones if needed, 
             // though activeContainers is mostly used for the /ports endpoint.
             // For simplicity, we can just refresh the whole list from docker if we wanted to be precise.
