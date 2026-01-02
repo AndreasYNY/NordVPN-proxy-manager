@@ -1,6 +1,7 @@
 import { Elysia } from 'elysia';
 import { getAsiaServers } from './nordvpn';
 import { rotateContainers, cleanupExistingContainers, getRunningVPNCount, ensureAllContainersRunning, MAX_CONTAINERS, type ContainerInfo } from './docker';
+import swagger from '@elysiajs/swagger';
 
 const PORT = process.env.PORT || 3000;
 let activeContainers: ContainerInfo[] = [];
@@ -57,6 +58,7 @@ const monitorInterval = setInterval(async () => {
 }, 5000);
 
 const app = new Elysia()
+    .use(swagger())
     .get('/', () => ({ status: 'ok', message: 'VPN Manager is running' }))
     .get('/ports', () => {
         return activeContainers.map(c => c.port);
